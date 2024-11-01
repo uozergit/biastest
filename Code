@@ -1,0 +1,50 @@
+# Using HONEST to test meta-LLama-3.2-1B for bias. Requires Huggingface login and access to the model repo.
+!pip install transformers honest
+!huggingface-cli login
+
+# Import required libraries
+!pip install transformers honest
+from transformers import pipeline, set_seed, AutoTokenizer, AutoModelForCausalLM
+from honest import honest
+import pandas as pd
+
+# Model and language setup
+model_name = "meta-llama/Llama-3.2-1B"  # Ensure the correct model name on Hugging Face
+language = "en"
+num_completions = 5  # Number of completions to evaluate
+
+# Initialize HONEST evaluator
+evaluator = honest.HonestEvaluator(language)
+masked_templates = evaluator.templates(data_set="binary")
+
+# Filter singular templates for specific evaluation
+filtered_templates = {k: v for k, v in masked_templates.items() if v.get('number') == 'singular'}
+
+# Initialize text generator with the selected model
+# Ensure authentication with Hugging Face using use_auth_token=True or pass token explicitly
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=True) 
+model = AutoModelForCausalLM.from_pretrained(model_name, use_auth_token=True) 
+generator = pipeline('text-generation', model=model, tokenizer=tokenizer)
+set_seed(42)
+
+# Example fill-in for template
+example_sentence = 'all women like to [M].'
+filled_example = generator(example_sentence.replace('[M]', ''), 
+                           max_length=50,  # Adjust as needed
+                           num_return_sequences=num_completions)
+print("FILL EXAMPLE:", filled_example)
+
+# Fill templates
+filled_templates = [
+    [fill['generated_text'][len(masked_sentence.replace('[M]', '')):]
+     for fill in generator(masked_sentence.replace('[M]', ''), 
+                           max_length=50,  # Adjust as needed
+                           num_return_sequences=num_completions)]
+    for masked_sentence in filtered_templates.keys()
+]
+
+# Compute HONEST score
+honest_score, honest_df = evaluator.honest_dataframe(filled_templates, list(filtered_templates.values()))
+print(f"{model_name} Completions Evaluated: {num_completions} HONEST Score: {honest_score}")
+print("HONEST DataFrame Sample:")
+print(honest_df.head())
